@@ -1,0 +1,227 @@
+//@version=5
+// ICC — Indication · Correction · Continuation
+// Built for XAUUSD (gold) but works on any symbol / timeframe.
+//
+//  Indication   : price closes through the last confirmed swing high (bull) or swing low (bear)
+//                 = break of structure, tells you the direction.
+//  Correction   : price pulls back into the impulse leg (default 38.2%–78.6% retracement)
+//                 without breaking the origin of the move.
+//  Continuation : price closes back through the high (bull) / low (bear) of the candle that
+//                 made the correction extreme = entry. Stop beyond the correction extreme.
+//
+// Optional higher-timeframe EMA filter keeps you trading with the bigger trend.
+indicator("ICC – Indication · Correction · Continuation", shorttitle="ICC", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=200, max_bars_back=500)
+
+// ───────── Inputs ─────────
+grpS     = "Structure"
+pivLen   = input.int(5, "Swing pivot length (bars each side)", minval=2, group=grpS)
+breakSrc = input.string("Close", "Break of structure confirmed by", options=["Close", "Wick"], group=grpS)
+
+grpC     = "Correction"
+fibMin   = input.float(0.382, "Min retracement to count as correction", minval=0.0, maxval=1.0, step=0.01, group=grpC)
+fibMax   = input.float(0.786, "Deep end of correction zone (display)", minval=0.0, maxval=1.0, step=0.01, group=grpC)
+
+grpR     = "Risk"
+slBufAtr = input.float(0.25, "Stop buffer (x ATR)", minval=0.0, step=0.05, group=grpR)
+rr       = input.float(2.0, "Take profit (R multiple)", minval=0.5, step=0.25, group=grpR)
+atrLen   = input.int(14, "ATR length", group=grpR)
+
+grpH     = "Higher-timeframe filter"
+useHtf   = input.bool(true, "Only trade with HTF trend", group=grpH)
+htfTf    = input.timeframe("240", "HTF timeframe", group=grpH)
+htfLen   = input.int(50, "HTF EMA length", group=grpH)
+
+grpV     = "Display"
+showZone = input.bool(true, "Show correction zone", group=grpV)
+showRisk = input.bool(true, "Show entry / SL / TP lines", group=grpV)
+showTbl  = input.bool(true, "Show status panel", group=grpV)
+bullCol  = input.color(color.new(#26a69a, 0), "Bullish colour", group=grpV)
+bearCol  = input.color(color.new(#ef5350, 0), "Bearish colour", group=grpV)
+
+// ───────── Series ─────────
+atr    = ta.atr(atrLen)
+htfEma = request.security(syminfo.tickerid, htfTf, ta.ema(close, htfLen)[1], lookahead=barmerge.lookahead_on)
+bullOk = not useHtf or close > htfEma
+bearOk = not useHtf or close < htfEma
+
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+
+var float swingH    = na
+var int   swingHBar = na
+var bool  hBroken   = true
+var float swingL    = na
+var int   swingLBar = na
+var bool  lBroken   = true
+
+if not na(ph)
+    swingH    := ph
+    swingHBar := bar_index - pivLen
+    hBroken   := false
+if not na(pl)
+    swingL    := pl
+    swingLBar := bar_index - pivLen
+    lBroken   := false
+
+upBreakPx = breakSrc == "Close" ? close : high
+dnBreakPx = breakSrc == "Close" ? close : low
+bullBOS   = not hBroken and not na(swingH) and upBreakPx > swingH
+bearBOS   = not lBroken and not na(swingL) and dnBreakPx < swingL
+
+// ───────── State machine ─────────
+// state:  1 bull indicated | 2 bull correcting | -1 bear indicated | -2 bear correcting | 0 idle
+var int   state    = 0
+var float origin   = na    // start of the impulse leg (must hold)
+var float impulse  = na    // extreme of the impulse leg
+var float brokenLv = na    // the structure level that was broken
+var int   indBar   = na
+var float corrExt  = na    // correction extreme
+var float trigger  = na    // continuation trigger price
+var box   zoneBox  = na
+
+bullInd  = false
+bearInd  = false
+bullCorr = false
+bearCorr = false
+bullCont = false
+bearCont = false
+invalid  = false
+
+// --- Bullish indication
+if bullBOS
+    hBroken := true
+    if state < 0
+        state := 0
+    if state == 0 and bullOk
+        lookback = math.min(bar_index - swingHBar, 500)
+        lo = low
+        for i = 0 to lookback
+            lo := math.min(lo, low[i])
+        state    := 1
+        origin   := lo
+        impulse  := high
+        brokenLv := swingH
+        indBar   := bar_index
+        bullInd  := true
+        line.new(swingHBar, swingH, bar_index, swingH, color=bullCol, style=line.style_dashed)
+        label.new(bar_index, high, "I", color=bullCol, textcolor=color.white, style=label.style_label_down, size=size.small, tooltip="Indication: bullish break of structure")
+
+// --- Bearish indication
+if bearBOS
+    lBroken := true
+    if state > 0
+        state := 0
+    if state == 0 and bearOk
+        lookback = math.min(bar_index - swingLBar, 500)
+        hi = high
+        for i = 0 to lookback
+            hi := math.max(hi, high[i])
+        state    := -1
+        origin   := hi
+        impulse  := low
+        brokenLv := swingL
+        indBar   := bar_index
+        bearInd  := true
+        line.new(swingLBar, swingL, bar_index, swingL, color=bearCol, style=line.style_dashed)
+        label.new(bar_index, low, "I", color=bearCol, textcolor=color.white, style=label.style_label_up, size=size.small, tooltip="Indication: bearish break of structure")
+
+// --- Bullish progression
+if state > 0 and not bullInd
+    rng = impulse - origin
+    if close < origin
+        invalid := true
+        label.new(bar_index, low, "✕", color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_up, size=size.small, tooltip="Setup invalidated: origin broken")
+        state := 0
+    else if state == 1
+        if high > impulse
+            impulse := high
+        else if rng > 0 and (impulse - low) / rng >= fibMin
+            state    := 2
+            corrExt  := low
+            trigger  := high
+            bullCorr := true
+            label.new(bar_index, low, "C", color=color.new(bullCol, 40), textcolor=color.white, style=label.style_label_up, size=size.small, tooltip="Correction: pullback into the impulse")
+            if showZone
+                zTop = impulse - rng * fibMin
+                zBot = impulse - rng * fibMax
+                zoneBox := box.new(indBar, zTop, bar_index, zBot, border_color=color.new(bullCol, 70), bgcolor=color.new(bullCol, 88))
+    else if state == 2
+        if low < corrExt
+            corrExt := low
+            trigger := high
+        else if close > trigger
+            bullCont := true
+            state    := 0
+            entry = close
+            sl    = corrExt - atr * slBufAtr
+            tp    = entry + (entry - sl) * rr
+            label.new(bar_index, low, "CONT ▲", color=bullCol, textcolor=color.white, style=label.style_label_up, size=size.normal, tooltip="Continuation: long entry\nEntry " + str.tostring(entry, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + "\nTP " + str.tostring(tp, format.mintick))
+            if showRisk
+                line.new(bar_index, entry, bar_index + 15, entry, color=color.gray)
+                line.new(bar_index, sl, bar_index + 15, sl, color=bearCol)
+                line.new(bar_index, tp, bar_index + 15, tp, color=bullCol)
+
+// --- Bearish progression
+if state < 0 and not bearInd
+    rng = origin - impulse
+    if close > origin
+        invalid := true
+        label.new(bar_index, high, "✕", color=color.new(color.gray, 100), textcolor=color.gray, style=label.style_label_down, size=size.small, tooltip="Setup invalidated: origin broken")
+        state := 0
+    else if state == -1
+        if low < impulse
+            impulse := low
+        else if rng > 0 and (high - impulse) / rng >= fibMin
+            state    := -2
+            corrExt  := high
+            trigger  := low
+            bearCorr := true
+            label.new(bar_index, high, "C", color=color.new(bearCol, 40), textcolor=color.white, style=label.style_label_down, size=size.small, tooltip="Correction: pullback into the impulse")
+            if showZone
+                zBot = impulse + rng * fibMin
+                zTop = impulse + rng * fibMax
+                zoneBox := box.new(indBar, zTop, bar_index, zBot, border_color=color.new(bearCol, 70), bgcolor=color.new(bearCol, 88))
+    else if state == -2
+        if high > corrExt
+            corrExt := high
+            trigger := low
+        else if close < trigger
+            bearCont := true
+            state    := 0
+            entry = close
+            sl    = corrExt + atr * slBufAtr
+            tp    = entry - (sl - entry) * rr
+            label.new(bar_index, high, "CONT ▼", color=bearCol, textcolor=color.white, style=label.style_label_down, size=size.normal, tooltip="Continuation: short entry\nEntry " + str.tostring(entry, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + "\nTP " + str.tostring(tp, format.mintick))
+            if showRisk
+                line.new(bar_index, entry, bar_index + 15, entry, color=color.gray)
+                line.new(bar_index, sl, bar_index + 15, sl, color=bullCol)
+                line.new(bar_index, tp, bar_index + 15, tp, color=bearCol)
+
+// keep the active zone box stretched to the current bar
+if not na(zoneBox) and math.abs(state) == 2
+    box.set_right(zoneBox, bar_index)
+
+// ───────── Plots & alerts ─────────
+plot(useHtf ? htfEma : na, "HTF EMA", color=color.new(color.orange, 30), linewidth=2)
+plot(state > 0 ? origin : state < 0 ? origin : na, "Setup origin (invalidation)", color=color.new(color.gray, 40), style=plot.style_linebr)
+plot(math.abs(state) == 2 ? trigger : na, "Continuation trigger", color=color.new(color.yellow, 0), style=plot.style_linebr)
+
+alertcondition(bullInd,  "ICC bullish indication",   "{{ticker}} ICC: bullish indication (BOS) at {{close}}")
+alertcondition(bearInd,  "ICC bearish indication",   "{{ticker}} ICC: bearish indication (BOS) at {{close}}")
+alertcondition(bullCorr, "ICC bullish correction",   "{{ticker}} ICC: bullish correction in progress at {{close}}")
+alertcondition(bearCorr, "ICC bearish correction",   "{{ticker}} ICC: bearish correction in progress at {{close}}")
+alertcondition(bullCont, "ICC LONG continuation",    "{{ticker}} ICC: LONG continuation entry at {{close}}")
+alertcondition(bearCont, "ICC SHORT continuation",   "{{ticker}} ICC: SHORT continuation entry at {{close}}")
+
+// ───────── Status panel ─────────
+var table tbl = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 20), border_width=1)
+if showTbl and barstate.islast
+    phase = state == 1 ? "Bull · Indication" : state == 2 ? "Bull · Correction" : state == -1 ? "Bear · Indication" : state == -2 ? "Bear · Correction" : "Waiting for BOS"
+    pCol  = state > 0 ? bullCol : state < 0 ? bearCol : color.gray
+    bias  = not useHtf ? "off" : close > htfEma ? "Bullish" : "Bearish"
+    table.cell(tbl, 0, 0, "ICC phase", text_color=color.white)
+    table.cell(tbl, 1, 0, phase, text_color=pCol)
+    table.cell(tbl, 0, 1, "HTF bias (" + htfTf + ")", text_color=color.white)
+    table.cell(tbl, 1, 1, bias, text_color=bias == "Bullish" ? bullCol : bias == "Bearish" ? bearCol : color.gray)
+    table.cell(tbl, 0, 2, "Trigger", text_color=color.white)
+    table.cell(tbl, 1, 2, math.abs(state) == 2 ? str.tostring(trigger, format.mintick) : "—", text_color=color.yellow)
