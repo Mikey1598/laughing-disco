@@ -36,7 +36,9 @@ NY = "America/New_York"
 PIV_4H = 3          # 4H major swing = bar with 3 lower highs / higher lows each side
 PIV_4H_INT = 2      # 4H internal swing (nearer, smaller structure)
 PIV_D = 3           # daily swing
-PIV_15 = 2          # 15m swing (used for the continuation trigger)
+PIV_15 = 2          # 15m swing (continuation trigger for 4H setups)
+PIV_W = 2           # weekly swing (bias for the daily setup)
+PIV_4H_TRIG = 2     # 4H swing (continuation trigger for daily setups)
 FIB_MIN = 0.382     # correction has started once price retraces this far
 FIB_ZONE = (0.5, 0.786)  # prime correction zone
 STOP_BUF = 5.0      # $ beyond correction extreme
@@ -218,16 +220,16 @@ def analyse_4h(df: pd.DataFrame, piv: int = PIV_4H) -> Setup:
     return s
 
 
-def ltf_trigger(m15: pd.DataFrame, s: Setup):
-    """While correcting, the 15m continuation trigger = last 15m swing low (short) / high (long)
-    formed since the correction began. Returns (level, fired)."""
+def ltf_trigger(ltf: pd.DataFrame, s: Setup, piv: int = PIV_15):
+    """While correcting, the continuation trigger = last lower-timeframe swing low (short) /
+    swing high (long) formed since the correction began. Returns (level, fired)."""
     start = getattr(s, "_corr_time", None)
     if s.phase != "CORRECTION" or start is None:
         return None, False
-    sub = m15[m15.index >= start]
-    if len(sub) < 2 * PIV_15 + 1:
+    sub = ltf[ltf.index >= start]
+    if len(sub) < 2 * piv + 1:
         return None, False
-    hs, ls = pivots(sub, PIV_15)
+    hs, ls = pivots(sub, piv)
     if s.direction == "short":
         ext_i = int(sub["high"].values.argmax())
         cands = [p for p in ls if p[1] < ext_i]  # higher low before the correction high
@@ -257,28 +259,35 @@ def run() -> dict:
     h4 = to_4h(h1)
 
     bias = structure_bias(d1, PIV_D)
+    wk = d1.resample("W-FRI").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    wbias = structure_bias(wk, PIV_W)
     price = float(m15["close"].iloc[-1])
-    return {"major": build(analyse_4h(h4, PIV_4H), m15, bias, price, offset, spot),
-            "internal": build(analyse_4h(h4, PIV_4H_INT), m15, bias, price, offset, spot)}
+    return {
+        "daily": build(analyse_4h(d1, PIV_D), h4, wbias, price, offset, spot,
+                       tf="Daily", ltf="4H", bias_tf="Weekly", ltf_piv=PIV_4H_TRIG),
+        "major": build(analyse_4h(h4, PIV_4H), m15, bias, price, offset, spot),
+        "internal": build(analyse_4h(h4, PIV_4H_INT), m15, bias, price, offset, spot),
+    }
 
 
-def build(s: Setup, m15: pd.DataFrame, bias: str, price: float, offset: float, spot) -> dict:
-    trig, fired = ltf_trigger(m15, s)
+def build(s: Setup, ltf_df: pd.DataFrame, bias: str, price: float, offset: float, spot,
+          tf: str = "4H", ltf: str = "15m", bias_tf: str = "Daily", ltf_piv: int = PIV_15) -> dict:
+    trig, fired = ltf_trigger(ltf_df, s, ltf_piv)
     if trig is not None:
         s.trigger = trig
         if fired:
             s.phase = "CONTINUATION"
-            s.entry = float(m15["close"].iloc[-1])
+            s.entry = float(ltf_df["close"].iloc[-1])
             s.stop = s.correction_extreme + STOP_BUF if s.direction == "short" else s.correction_extreme - STOP_BUF
             risk = abs(s.entry - s.stop)
             s.tp1 = s.entry - RR * risk if s.direction == "short" else s.entry + RR * risk
 
     aligned = (s.direction == "short" and bias == "bearish") or (s.direction == "long" and bias == "bullish")
-    grade = "A (with daily trend)" if aligned else "B (counter-trend: half size)"
+    grade = f"A (with {bias_tf.lower()} trend)" if aligned else "B (counter-trend: half size)"
     if s.direction == "short" and s.phase == "INDICATION" and s.zone and price >= s.shallow_zone[0]:
-        s.notes.append("Price is already in the shallow correction area: watch the 15m chart.")
+        s.notes.append(f"Price is already in the shallow correction area: watch the {ltf} chart.")
     if s.direction == "long" and s.phase == "INDICATION" and s.zone and price <= s.shallow_zone[1]:
-        s.notes.append("Price is already in the shallow correction area: watch the 15m chart.")
+        s.notes.append(f"Price is already in the shallow correction area: watch the {ltf} chart.")
 
     out = asdict(s)
     out.update({
@@ -287,6 +296,9 @@ def build(s: Setup, m15: pd.DataFrame, bias: str, price: float, offset: float, s
         "spot_quote": spot,
         "futures_to_spot_offset": round(offset, 2),
         "daily_bias": bias,
+        "bias_tf": bias_tf,
+        "tf": tf,
+        "entry_tf": ltf,
         "grade": grade,
         "state_key": f"{s.direction}|{s.phase}|{s.indication_time}",
     })
@@ -302,10 +314,10 @@ def report(r: dict) -> str:
     side = "SHORT" if d == "short" else "LONG" if d == "long" else "-"
     lines = [
         f"ICC scan · XAUUSD ≈ {r['price']}  ({r['as_of']})",
-        f"Daily bias: {r['daily_bias']}   Setup: {side}   Grade: {r['grade']}",
+        f"{r['bias_tf']} bias: {r['daily_bias']}   Setup: {side}   Grade: {r['grade']}",
         f"Phase: {p}",
         "",
-        f"1) INDICATION  : 4H close through {r['broken_level']} at {r['indication_time']}",
+        f"1) INDICATION  : {r['tf']} close through {r['broken_level']} at {r['indication_time']}",
         f"   Origin / invalidation: {r['origin']}   Impulse extreme: {r['impulse']}",
         f"2) CORRECTION  : shallow {r['shallow_zone'][0] if r['shallow_zone'] else '-'}–{r['shallow_zone'][1] if r['shallow_zone'] else '-'}"
         f" | prime {r['zone'][0] if r['zone'] else '-'}–{r['zone'][1] if r['zone'] else '-'}",
@@ -313,11 +325,11 @@ def report(r: dict) -> str:
     if p in ("CORRECTION", "CONTINUATION"):
         lines.append(f"   Correction extreme so far: {r['correction_extreme']}")
     trig = r["trigger"] if r["trigger"] else "forms once the correction starts"
-    lines.append(f"3) CONTINUATION: 15m close {'below' if d == 'short' else 'above'} {trig}")
+    lines.append(f"3) CONTINUATION: {r['entry_tf']} close {'below' if d == 'short' else 'above'} {trig}")
     if p == "CONTINUATION":
         lines.append(f"   ENTRY {r['entry']}  STOP {r['stop']}  TP1 {r['tp1']}  TP2 {r['tp2']}")
     if p == "INVALIDATED":
-        lines.append("   Setup invalidated: wait for a new 4H break of structure.")
+        lines.append(f"   Setup invalidated: wait for a new {r['tf']} break of structure.")
     lines += [f"Note: {n}" for n in r["notes"]]
     lines.append(f"(Prices = COMEX futures shifted by {r['futures_to_spot_offset']:+} to match spot.)")
     return "\n".join(lines)
@@ -333,7 +345,7 @@ def main():
     except Exception as e:  # network / data problems
         print(f"ICC scan failed: {e}", file=sys.stderr)
         sys.exit(2)
-    key = r["internal"]["state_key"] + " || " + r["major"]["state_key"]
+    key = " || ".join(f"{k}:{r[k]['state_key']}" for k in ("daily", "major", "internal"))
     if a.state_file:
         sf = Path(a.state_file)
         prev = sf.read_text().strip() if sf.exists() else ""
@@ -343,6 +355,9 @@ def main():
     if a.json:
         print(json.dumps(r, indent=2, default=str))
     else:
+        print("=== DAILY setup (daily swings, 4H entry trigger) ===")
+        print(report(r["daily"]))
+        print()
         print("=== INTERNAL setup (nearer, smaller 4H swings) ===")
         print(report(r["internal"]))
         print()

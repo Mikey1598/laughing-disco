@@ -34,4 +34,4 @@ You can send a screenshot of your gold chart to Claude. Ask it to identify the c
 In TradingView, create an alert, choose **ICC**, then **Any alert() function call**. Each alert message contains the levels for that phase: the indication with its invalidation level and correction zone, the correction with its trigger price, and the continuation with entry, SL and TP.
 
 ## Automatic scanner
-`python3 icc_scanner.py` downloads live gold data and reports the current ICC phase for both the internal and major 4H setups. Add `--json` for machine-readable output, or `--state-file PATH` to see whether the phase has changed since the last run.
+`python3 icc_scanner.py` downloads live gold data and reports the current ICC phase for three setups: the **daily** setup (4H entry trigger), and the **major** and **internal** 4H setups (15m entry trigger). Add `--json` for machine-readable output, or `--state-file PATH` to see whether the phase has changed since the last run.

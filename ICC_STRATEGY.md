@@ -15,6 +15,15 @@ ICC is a **market-structure** strategy. Price moves in impulses and pullbacks. I
 
 Setups that go against the daily bias are **B-grade**. Trade them at half size, or skip them.
 
+### Daily swing setup (the same rules one timeframe up)
+| Role | Timeframe |
+|---|---|
+| Bias | **Weekly** (direction of the last weekly break of structure) |
+| Setup | **Daily**: a daily close through a daily swing point gives the Indication, and the daily zone is the Correction |
+| Entry | **4H**: a 4H close through the pullback's last 4H swing point is the Continuation |
+
+Daily setups take longer to form, need wider stops and aim for bigger targets. Size them down so your risk is still 1%. If a daily zone and a 4H zone overlap, that overlap is the highest-probability area on the chart.
+
 ## 1. Market structure basics
 - A **swing high** is a candle whose high is above the highs of the candles on both sides. The defaults are 3 candles each side for major swings on the 4H, and 2 for internal swings. A **swing low** is the mirror image.
 - **Bullish structure:** higher highs and higher lows. **Bearish structure:** lower highs and lower lows.
