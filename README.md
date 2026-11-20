@@ -26,3 +26,12 @@ A setup is cancelled (`✕`) when price closes beyond the origin of the impulse.
 You can send a screenshot of your gold chart to Claude. Ask it to identify the current ICC phase, the key levels and whether a continuation entry is valid.
 
 *This is an educational tool and not financial advice. Backtest it before trading real money.*
+
+## Full rules
+`ICC_STRATEGY.md` sets out the complete strategy: the timeframe stack, structure, each phase, risk, when not to trade, and grading.
+
+## Instant alerts with levels
+In TradingView, create an alert, choose **ICC**, then **Any alert() function call**. Each alert message contains the levels for that phase: the indication with its invalidation level and correction zone, the correction with its trigger price, and the continuation with entry, SL and TP.
+
+## Automatic scanner
+`python3 icc_scanner.py` downloads live gold data and reports the current ICC phase for both the internal and major 4H setups. Add `--json` for machine-readable output, or `--state-file PATH` to see whether the phase has changed since the last run.

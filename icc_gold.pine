@@ -78,6 +78,9 @@ var int   indBar   = na
 var float corrExt  = na    // correction extreme
 var float trigger  = na    // continuation trigger price
 var box   zoneBox  = na
+var float lastEntry = na
+var float lastSL    = na
+var float lastTP    = na
 
 bullInd  = false
 bearInd  = false
@@ -155,6 +158,9 @@ if state > 0 and not bullInd
             entry = close
             sl    = corrExt - atr * slBufAtr
             tp    = entry + (entry - sl) * rr
+            lastEntry := entry
+            lastSL    := sl
+            lastTP    := tp
             label.new(bar_index, low, "CONT ▲", color=bullCol, textcolor=color.white, style=label.style_label_up, size=size.normal, tooltip="Continuation: long entry\nEntry " + str.tostring(entry, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + "\nTP " + str.tostring(tp, format.mintick))
             if showRisk
                 line.new(bar_index, entry, bar_index + 15, entry, color=color.gray)
@@ -191,6 +197,9 @@ if state < 0 and not bearInd
             entry = close
             sl    = corrExt + atr * slBufAtr
             tp    = entry - (sl - entry) * rr
+            lastEntry := entry
+            lastSL    := sl
+            lastTP    := tp
             label.new(bar_index, high, "CONT ▼", color=bearCol, textcolor=color.white, style=label.style_label_down, size=size.normal, tooltip="Continuation: short entry\nEntry " + str.tostring(entry, format.mintick) + "\nSL " + str.tostring(sl, format.mintick) + "\nTP " + str.tostring(tp, format.mintick))
             if showRisk
                 line.new(bar_index, entry, bar_index + 15, entry, color=color.gray)
@@ -200,6 +209,27 @@ if state < 0 and not bearInd
 // keep the active zone box stretched to the current bar
 if not na(zoneBox) and math.abs(state) == 2
     box.set_right(zoneBox, bar_index)
+
+// ───────── Detailed alerts (Create Alert → ICC → "Any alert() function call") ─────────
+f(x) => str.tostring(x, format.mintick)
+legRng = math.abs(origin - impulse)
+z50  = state < 0 ? impulse + legRng * 0.5 : impulse - legRng * 0.5
+z786 = state < 0 ? impulse + legRng * fibMax : impulse - legRng * fibMax
+z382 = state < 0 ? impulse + legRng * fibMin : impulse - legRng * fibMin
+if bearInd
+    alert(syminfo.ticker + " ICC SHORT · 1) INDICATION: closed below " + f(brokenLv) + ". Invalidation " + f(origin) + ". Correction zone " + f(z382) + " / prime " + f(z50) + "–" + f(z786) + ". Wait for the pullback.", alert.freq_once_per_bar_close)
+if bullInd
+    alert(syminfo.ticker + " ICC LONG · 1) INDICATION: closed above " + f(brokenLv) + ". Invalidation " + f(origin) + ". Correction zone " + f(z382) + " / prime " + f(z50) + "–" + f(z786) + ". Wait for the pullback.", alert.freq_once_per_bar_close)
+if bearCorr
+    alert(syminfo.ticker + " ICC SHORT · 2) CORRECTION: pullback reached " + f(close) + ". Continuation trigger: close below " + f(trigger) + ". Invalidation " + f(origin) + ".", alert.freq_once_per_bar_close)
+if bullCorr
+    alert(syminfo.ticker + " ICC LONG · 2) CORRECTION: pullback reached " + f(close) + ". Continuation trigger: close above " + f(trigger) + ". Invalidation " + f(origin) + ".", alert.freq_once_per_bar_close)
+if bearCont
+    alert(syminfo.ticker + " ICC SHORT · 3) CONTINUATION — ENTRY " + f(lastEntry) + " · SL " + f(lastSL) + " · TP " + f(lastTP), alert.freq_once_per_bar_close)
+if bullCont
+    alert(syminfo.ticker + " ICC LONG · 3) CONTINUATION — ENTRY " + f(lastEntry) + " · SL " + f(lastSL) + " · TP " + f(lastTP), alert.freq_once_per_bar_close)
+if invalid
+    alert(syminfo.ticker + " ICC setup INVALIDATED: origin broken. Wait for a new break of structure.", alert.freq_once_per_bar_close)
 
 // ───────── Plots & alerts ─────────
 plot(useHtf ? htfEma : na, "HTF EMA", color=color.new(color.orange, 30), linewidth=2)
