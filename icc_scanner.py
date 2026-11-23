@@ -226,6 +226,14 @@ def ltf_trigger(ltf: pd.DataFrame, s: Setup, piv: int = PIV_15):
     start = getattr(s, "_corr_time", None)
     if s.phase != "CORRECTION" or start is None:
         return None, False
+    start = pd.Timestamp(start)
+    tz = ltf.index.tz
+    if tz is not None and start.tzinfo is None:
+        start = start.tz_localize(tz)  # 4H bars are naive New York wall-clock times
+    elif tz is None and start.tzinfo is not None:
+        start = start.tz_localize(None)
+    elif tz is not None:
+        start = start.tz_convert(tz)
     sub = ltf[ltf.index >= start]
     if len(sub) < 2 * piv + 1:
         return None, False
