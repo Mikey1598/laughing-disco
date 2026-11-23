@@ -148,8 +148,11 @@ def analyse_4h(df: pd.DataFrame, piv: int = PIV_4H) -> Setup:
         while li < len(ls) and ls[li][0] <= i:
             last_l = (ls[li][1], ls[li][2]); li += 1
 
-        bear_bos = last_l is not None and C[i] < last_l[1]
-        bull_bos = last_h is not None and C[i] > last_h[1]
+        # the last bar is still forming: its close can change, so close-based signals
+        # (breaks, invalidation, continuation) only count on bars that have closed
+        confirmed = i < len(df) - 1
+        bear_bos = confirmed and last_l is not None and C[i] < last_l[1]
+        bull_bos = confirmed and last_h is not None and C[i] > last_h[1]
 
         if bear_bos and (s.direction != "short" or s.phase != "CORRECTION"):
             # new bearish BOS: fresh setup, or the indication refreshes to the newest leg
@@ -172,7 +175,7 @@ def analyse_4h(df: pd.DataFrame, piv: int = PIV_4H) -> Setup:
             last_h = None
 
         if s.direction == "short" and s.phase in ("INDICATION", "CORRECTION"):
-            if C[i] > s.origin:
+            if confirmed and C[i] > s.origin:
                 s.phase = "INVALIDATED"; continue
             rng = s.origin - s.impulse
             if s.phase == "INDICATION":
@@ -183,11 +186,11 @@ def analyse_4h(df: pd.DataFrame, piv: int = PIV_4H) -> Setup:
             elif s.phase == "CORRECTION":
                 if H[i] > s.correction_extreme:
                     s.correction_extreme, s.trigger = H[i], L[i]
-                elif C[i] < s.trigger:
+                elif confirmed and C[i] < s.trigger:
                     s.phase = "CONTINUATION"
                     s.entry, s.stop = C[i], s.correction_extreme + STOP_BUF
         elif s.direction == "long" and s.phase in ("INDICATION", "CORRECTION"):
-            if C[i] < s.origin:
+            if confirmed and C[i] < s.origin:
                 s.phase = "INVALIDATED"; continue
             rng = s.impulse - s.origin
             if s.phase == "INDICATION":
@@ -198,7 +201,7 @@ def analyse_4h(df: pd.DataFrame, piv: int = PIV_4H) -> Setup:
             elif s.phase == "CORRECTION":
                 if L[i] < s.correction_extreme:
                     s.correction_extreme, s.trigger = L[i], H[i]
-                elif C[i] > s.trigger:
+                elif confirmed and C[i] > s.trigger:
                     s.phase = "CONTINUATION"
                     s.entry, s.stop = C[i], s.correction_extreme - STOP_BUF
 
@@ -244,14 +247,14 @@ def ltf_trigger(ltf: pd.DataFrame, s: Setup, piv: int = PIV_15):
         if not cands:
             return None, False
         lvl = cands[-1][2]
-        fired = bool((sub["close"].values[ext_i + 1:] < lvl).any())
+        fired = bool((sub["close"].values[ext_i + 1:-1] < lvl).any())  # skip forming bar
     else:
         ext_i = int(sub["low"].values.argmin())
         cands = [p for p in hs if p[1] < ext_i]
         if not cands:
             return None, False
         lvl = cands[-1][2]
-        fired = bool((sub["close"].values[ext_i + 1:] > lvl).any())
+        fired = bool((sub["close"].values[ext_i + 1:-1] > lvl).any())  # skip forming bar
     return lvl, fired
 
 
